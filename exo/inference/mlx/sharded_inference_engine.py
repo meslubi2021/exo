@@ -8,6 +8,8 @@ from typing import Optional
 from exo.download.shard_download import ShardDownloader
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+
 
 class MLXDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
@@ -20,7 +22,8 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
     loop = asyncio.get_running_loop()
     if image_str:
       image = await get_image_from_str(image_str)
-      inputs = await loop.run_in_executor(self.executor, self.tokenizer, prompt, image, return_tensors="np")
+      tokenize = partial(self.tokenizer, prompt, image, return_tensors="np")
+      inputs = await loop.run_in_executor(self.executor, tokenize)
       pixel_values = mx.array(inputs["pixel_values"])
       input_ids = mx.array(inputs["input_ids"])
       output_data: np.ndarray = np.array(await loop.run_in_executor(self.executor, self.stateful_sharded_model.step, request_id, input_ids, pixel_values))
@@ -42,7 +45,10 @@ class MLXDynamicShardInferenceEngine(InferenceEngine):
 
     if self.shard != shard:
       loop = asyncio.get_running_loop()
-      def load_shard_wrapper(): return asyncio.run(load_shard(model_path, shard))
+
+      def load_shard_wrapper():
+        return asyncio.run(load_shard(model_path, shard))
+
       model_shard, self.tokenizer = await loop.run_in_executor(self.executor, load_shard_wrapper)
       self.stateful_sharded_model = await loop.run_in_executor(self.executor, StatefulShardedModel, shard, model_shard)
       self.shard = shard
